@@ -857,6 +857,14 @@ for (const mode of ["classic", "formula"]) {
     test(`${mode}: elapsed e tráfego consomem dt uma vez, não uma vez por jogador`, () => {
         const one = game({ mode }),
             two = game({ mode, numPlayers: 2 });
+        const formulaDriver =
+            mode === "formula"
+                ? {
+                      ...one.world.traffic[0].driver,
+                      acceleration: 0.5,
+                      pace: 0.9,
+                  }
+                : null;
         const movements = [];
         for (const { world, race } of [one, two]) {
             play(race);
@@ -867,12 +875,21 @@ for (const mode of ["classic", "formula"]) {
             }
             const car = world.traffic[0],
                 before = mode === "formula" ? car.progress : car.z;
+            if (mode === "formula") {
+                // Mesmo perfil em 1P/2P; reação de largada não pode mascarar dt duplicado.
+                car.launchDelay = 0;
+                car.driver = { ...formulaDriver };
+            }
             race.update(0.125, []);
             close(race.elapsed, 0.125);
             const moved =
                 mode === "formula"
                     ? car.progress - before
                     : (car.z - before + world.trackLength) % world.trackLength;
+            assert.ok(
+                moved > 0,
+                `${race.players.length}P: tráfego precisa realmente se mover`,
+            );
             close(moved, car.speed * 0.125, "tráfego atualizado uma vez");
             movements.push(moved);
             if (mode === "classic") {
@@ -1197,7 +1214,7 @@ for (let difficulty = 0; difficulty < 3; difficulty++) {
         });
         close(
             formula.world.traffic[0].speed / formula.race.maxSpeed,
-            [0.68, 0.74, 0.8][difficulty],
+            [0.68, 0.76, 0.78][difficulty],
         );
     });
 }

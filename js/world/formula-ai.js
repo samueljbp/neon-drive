@@ -5,21 +5,34 @@
         rand = ND.util.rand,
         increase = ND.util.increase;
 
+    // Desempenho fixo por dificuldade, nunca pela distância até o jogador.
+    // O jogador mantém sua física e pode superar esses limites com nitro (1,35x).
+    var LEVELS = [
+        { speedBonus: 0, acceleration: 1, cornerLoss: 1 },
+        { speedBonus: 0.08, acceleration: 1.4, cornerLoss: 0.8 },
+        { speedBonus: 0.1, acceleration: 1.44, cornerLoss: 0.6 },
+    ];
+    function level(difficulty) {
+        return LEVELS[
+            Number.isInteger(difficulty) ? clamp(difficulty, 0, 2) : 1
+        ];
+    }
+
     function createDrivers(count) {
         var drivers = [];
         for (var i = 0; i < count; i++) {
+            var skill = i / Math.max(1, count - 1);
             // Distribuição estratificada: sempre há estilos distintos, mesmo num
-            // sorteio ruim. O embaralhamento desvincula desempenho da posição no grid.
+            // sorteio ruim. Variação moderada, sem transformar o fundo em tráfego lento.
             drivers.push({
-                pace:
-                    0.59 +
-                    (0.25 * i) / Math.max(1, count - 1) +
-                    rand(-0.01, 0.01),
+                pace: 0.9 + 0.12 * skill + rand(-0.005, 0.005),
                 cornerLoss:
-                    0.06 + (0.065 * ((i * 7) % count)) / Math.max(1, count - 1),
-                acceleration: 1 / rand(2.7, 4.3),
+                    0.012 +
+                    0.014 * (1 - skill) +
+                    (0.004 * ((i * 7) % count)) / Math.max(1, count - 1),
+                acceleration: 1 / (2.4 - 0.6 * skill + rand(-0.08, 0.08)),
                 braking: 1 / rand(1.2, 1.8),
-                reaction: rand(0.05, 0.38),
+                reaction: rand(0.04, 0.14),
                 aggression: rand(0.3, 0.9),
                 steering: rand(0.7, 1.0),
                 line: rand(-0.65, 0.65),
@@ -31,11 +44,24 @@
             drivers[j] = drivers[k];
             drivers[k] = swap;
         }
+        // Primeira fila competitiva, como numa classificação; o restante continua
+        // embaralhado para haver disputas. Não aumenta a vantagem inicial do grid.
+        for (var front = 0; front < Math.min(2, count); front++) {
+            var best = front;
+            for (var n = front + 1; n < count; n++)
+                if (drivers[n].pace > drivers[best].pace) best = n;
+            var qualified = drivers[front];
+            drivers[front] = drivers[best];
+            drivers[best] = qualified;
+        }
         return drivers;
     }
 
     function pace(driver, difficulty, maxSpeed) {
-        return maxSpeed * clamp(driver.pace + difficulty * 0.06, 0.55, 0.97);
+        return (
+            maxSpeed *
+            clamp(driver.pace + level(difficulty).speedBonus, 0.55, 1.14)
+        );
     }
 
     // Decisões simultâneas sobre um retrato do início do tick. Nenhuma IA lê
@@ -43,6 +69,7 @@
     function plan(world, dt, options) {
         var maxSpeed = options.maxSpeed,
             gap = world.SEGLEN * 3;
+        var tuning = level(options.difficulty);
         var cars = world.traffic.filter(function (c) {
             return !c.finished;
         });
@@ -84,6 +111,90 @@
                 x + width > Math.min(from, to) && x - width < Math.max(from, to)
             );
         }
+        // Se uma fila para diante de humanos, o desvio individual pode ser
+        // impossível: vizinhos precisam ceder espaço antes de alguém passar.
+        // Reserva um corredor preservando a ordem lateral (nunca cruza carros).
+        var cooperative = new Map();
+        var stationary = traffic.filter(function (other) {
+            return !other.car && other.speed < maxSpeed * 0.015;
+        });
+        if (stationary.length)
+            traffic.slice(0, cars.length).forEach(function (self) {
+                if (self.speed > maxSpeed * 0.08 || cooperative.has(self.car))
+                    return;
+                var obstacles = stationary.filter(function (other) {
+                    var rel = relative(other.z, self.z);
+                    return rel > 0 && rel < gap * 3;
+                });
+                if (!obstacles.length) return;
+                var row = traffic
+                    .filter(function (other) {
+                        return (
+                            other.car &&
+                            other.speed < maxSpeed * 0.08 &&
+                            Math.abs(relative(other.z, self.z)) < gap * 0.9
+                        );
+                    })
+                    .sort(function (a, b) {
+                        return a.x - b.x || a.car.id - b.car.id;
+                    });
+                if (row.length < 2) return;
+                var half = Math.max.apply(
+                    null,
+                    row.map(function (other) {
+                        return other.half;
+                    }),
+                );
+                var limit = 1 - half - 0.06,
+                    separation = half * 2 + 0.07;
+                var corridors = [0, -limit, limit];
+                obstacles.forEach(function (other) {
+                    var clearance = half + other.half + 0.095;
+                    corridors.push(other.x - clearance, other.x + clearance);
+                });
+                var choice = null;
+                corridors.forEach(function (center) {
+                    if (
+                        Math.abs(center) > limit ||
+                        obstacles.some(function (other) {
+                            return (
+                                Math.abs(center - other.x) <
+                                half + other.half + 0.06
+                            );
+                        })
+                    )
+                        return;
+                    row.forEach(function (pilot, index) {
+                        var left = index,
+                            right = row.length - index - 1;
+                        if (
+                            (left && (center + limit) / left < separation) ||
+                            (right && (limit - center) / right < separation)
+                        )
+                            return;
+                        var cost = Math.abs(pilot.x - center);
+                        if (!choice || cost < choice.cost)
+                            choice = {
+                                center: center,
+                                index: index,
+                                cost: cost,
+                            };
+                    });
+                });
+                if (!choice) return;
+                row.forEach(function (pilot, index) {
+                    var target = choice.center;
+                    if (index < choice.index)
+                        target -=
+                            ((choice.index - index) * (choice.center + limit)) /
+                            choice.index;
+                    else if (index > choice.index)
+                        target +=
+                            ((index - choice.index) * (limit - choice.center)) /
+                            (row.length - choice.index - 1);
+                    cooperative.set(pilot.car, target);
+                });
+            });
         var plans = new Map();
         traffic.slice(0, cars.length).forEach(function (self) {
             var c = self.car,
@@ -99,7 +210,11 @@
             );
             var targetSpeed = pace(driver, options.difficulty, maxSpeed);
             var wanted =
-                targetSpeed * Math.max(0.46, 1 - bend * driver.cornerLoss);
+                targetSpeed *
+                Math.max(
+                    0.46,
+                    1 - bend * driver.cornerLoss * tuning.cornerLoss,
+                );
             var ideal =
                 Math.abs(curve) < 0.4
                     ? driver.line
@@ -126,7 +241,8 @@
                         Math.abs(rel) < gap - 0.001 ||
                         (rel < 0 &&
                             -rel <
-                                gap +
+                                gap -
+                                    0.001 +
                                     Math.max(0, other.speed - c.speed) * 0.65);
                     if (
                         beside &&
@@ -145,7 +261,13 @@
             }
             var lane = clamp(c.lane, -limit, limit),
                 laneT = Math.max(0, c.laneT - dt);
-            if (laneT === 0 || !Number.isFinite(laneCost(lane))) {
+            if (cooperative.has(c)) {
+                var reserved = cooperative.get(c);
+                lane = Number.isFinite(laneCost(reserved))
+                    ? reserved
+                    : c.offset;
+                laneT = 0.1;
+            } else if (laneT === 0 || !Number.isFinite(laneCost(lane))) {
                 var candidates = [lane, ideal, -0.74, -0.37, 0, 0.37, 0.74];
                 // Procura também corredores estreitos entre carros, não apenas
                 // os pontos fixos. Importante com dois humanos parados lado a lado.
@@ -182,7 +304,10 @@
                       clamp(
                           wanted - c.speed,
                           -maxSpeed * driver.braking * dt,
-                          maxSpeed * driver.acceleration * dt,
+                          maxSpeed *
+                              driver.acceleration *
+                              tuning.acceleration *
+                              dt,
                       );
 
             nearby.forEach(function (other) {

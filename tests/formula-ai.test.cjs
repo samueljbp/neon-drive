@@ -254,14 +254,14 @@ function overtaking() {
     const env = straight(setup(), 2);
     const [fast, slow] = env.world.traffic;
     // Mesmo estado inicial e mesma linha; só o ritmo permite alcançar o líder.
-    const speed = MAX_SPEED * (0.55 + 0.06);
+    const speed = MAX_SPEED * (0.55 + 0.08);
     place(env.world, fast, { speed, driver: { pace: 0.9 } });
     place(env.world, slow, { progress: 13000, speed, driver: { pace: 0.55 } });
     env.world.syncTraffic();
     return { ...env, fast, slow };
 }
 
-test("perfis gerados têm spread de pace > 0.18, estilos distintos e desempenho fora da ordem do grid", () => {
+test("perfis gerados têm spread de pace entre 0.10 e 0.15, estilos distintos e os dois melhores na primeira fila", () => {
     for (const seed of [1, 0x4e454f4e, 0xdeadbeef]) {
         for (const numPlayers of [1, 2]) {
             const { ND, world } = setup({ seed, numPlayers });
@@ -271,11 +271,21 @@ test("perfis gerados têm spread de pace > 0.18, estilos distintos e desempenho 
             ]) {
                 const paces = Array.from(drivers, (driver) => driver.pace);
                 const label = `seed=${seed}/${numPlayers}P; paces=${paces.join(",")}`;
-                assert.ok(spread(paces) > 0.18, label);
+                assert.ok(spread(paces) > 0.1 && spread(paces) < 0.15, label);
+                assert.deepEqual(
+                    paces.slice(0, 2),
+                    [...paces].sort((a, b) => b - a).slice(0, 2),
+                    `Primeira fila deve reunir os dois melhores ritmos: ${label}`,
+                );
+                const remaining = paces.slice(2);
                 assert.ok(
-                    paces.some((pace, i) => i > 0 && pace > paces[i - 1]) &&
-                        paces.some((pace, i) => i > 0 && pace < paces[i - 1]),
-                    `Ritmo não pode ser monotônico com o grid: ${label}`,
+                    remaining.some(
+                        (pace, i) => i > 0 && pace > remaining[i - 1],
+                    ) &&
+                        remaining.some(
+                            (pace, i) => i > 0 && pace < remaining[i - 1],
+                        ),
+                    `Ritmo do restante do grid não pode ser monotônico: ${label}`,
                 );
                 for (const field of ["acceleration", "braking", "cornerLoss"]) {
                     const values = Array.from(
@@ -316,7 +326,7 @@ test("pace aplica dificuldade e maxSpeed sem apagar diferenças individuais", ()
         );
         speeds.forEach((speed, difficulty) => {
             assert.ok(
-                speed >= MAX_SPEED * 0.55 && speed <= MAX_SPEED * 0.97,
+                speed >= MAX_SPEED * 0.89 && speed <= MAX_SPEED * 1.14,
                 `velocidade=${speed}`,
             );
             close(
@@ -347,14 +357,14 @@ test("aceleração, frenagem e capacidade de curva alteram a dinâmica real, nã
         place(env.world, car, { driver });
         close(
             plan(env).get(car).speed,
-            MAX_SPEED * driver.acceleration * DT,
+            MAX_SPEED * driver.acceleration * 1.4 * DT,
             "aceleração planejada",
         );
         tick(env.world, 0);
         const acceleration = car.speed;
         close(
             acceleration,
-            MAX_SPEED * driver.acceleration * DT,
+            MAX_SPEED * driver.acceleration * 1.4 * DT,
             "aceleração aplicada",
         );
         car.speed = MAX_SPEED;
@@ -369,7 +379,7 @@ test("aceleração, frenagem e capacidade de curva alteram a dinâmica real, nã
         close(
             cornerSpeed,
             env.ND.formulaAI.pace(car.driver, 1, MAX_SPEED) *
-                (1 - 4 * driver.cornerLoss),
+                (1 - 4 * driver.cornerLoss * 0.8),
             "ritmo em curva",
         );
         measured.push({ acceleration, braking, cornerSpeed });

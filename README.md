@@ -73,6 +73,14 @@ de carros e caminhões, derrapagens, nitro, colisões, combos e pontuação.
   Procuram trajetórias livres para ultrapassar, respeitam carros próximos e os
   jogadores, e freiam quando não há espaço. Sem teletransportes ou recuperação
   artificial de distância em relação ao jogador.
+- A primeira fila reúne os dois pilotos de maior velocidade; o restante do grid
+  continua misturado. A IA tem largadas mais fortes e perde menos velocidade nas
+  curvas: **Fácil** é mais tolerante, **Médio** exige bom uso do nitro e **Difícil**
+  mantém um ritmo mais alto, com menor margem para erros. Os melhores adversários
+  podem superar a velocidade normal do jogador, mas ficam abaixo do limite com
+  nitro; isso é definido pelo piloto/dificuldade, nunca por quem está ganhando.
+- Em congestionamentos diante de jogadores parados, adversários lado a lado
+  cedem espaço para liberar um corredor, sem atravessar uns aos outros.
 - A prova termina quando todos os humanos completam as três voltas. Em tela
   dividida, quem chegou aguarda o outro; IAs ainda não finalizadas aparecem como
   **EM PISTA**, sem receber um tempo de chegada fictício.
@@ -165,6 +173,12 @@ Os testes verificam comportamento unitário e integração dos módulos: referê
 JS/CSS e sintaxe, faixas e tráfego, nitro, colisões, modelos, interpolação e oclusão,
 viewports, circuitos, grid, largada, relógio compartilhado, pausa/reset, checkpoints,
 classificação, voltas e chegadas interpoladas.
+
+`tests/formula-balance.test.cjs` compara o pelotão com o jogador usando a física
+real em pista livre, com e sem nitro, nos quatro circuitos. Verifica disputa na
+largada, progressão da dificuldade e possibilidade de vitória com uma corrida
+sem erros. É uma referência otimista de desempenho, não uma previsão do resultado
+de toda partida com tráfego e colisões.
 
 O Canvas simulado verifica chamadas e estados, não rasteriza pixels. A suíte
 opcional `tests/browser.smoke.cjs` executa o jogo real no Chromium: abertura por
