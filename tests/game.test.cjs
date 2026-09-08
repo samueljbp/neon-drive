@@ -628,6 +628,11 @@ for (let circuit = 0; circuit < 4; circuit++) {
                 assert.equal(race.mode, "formula");
                 assert.equal(world.circuit.id, circuitIDs[circuit]);
                 assert.equal(world.ROADW, 2600);
+                assert.equal(ND.modes.formula.lapCount, 5);
+                assert.equal(world.lapCount, ND.modes.formula.lapCount);
+                race.players.forEach((_, i) =>
+                    assert.equal(race.hudFor(i).lapCount, world.lapCount),
+                );
                 assert.equal(
                     world.trackLength,
                     world.segments.length * world.SEGLEN,
@@ -747,14 +752,22 @@ for (let circuit = 0; circuit < 4; circuit++) {
                 awayFromFinish(world);
                 race.elapsed = 60;
                 race.players.forEach((p, i) =>
-                    beforeLine(race, p, 3, i ? 100 : 300),
+                    beforeLine(race, p, world.lapCount, i ? 100 : 300),
                 );
                 race.update(0.04, controls(race));
                 race.players.forEach((p, i) => {
                     assert.equal(p.finished, true);
-                    assert.equal(p.distance, world.trackLength * 3);
+                    assert.equal(
+                        p.distance,
+                        world.trackLength * world.lapCount,
+                    );
                     assert.equal(p.position, world.startLineZ);
-                    assert.equal(p.laps, 3);
+                    assert.equal(p.laps, world.lapCount);
+                    assert.equal(
+                        p.lapFlash,
+                        0,
+                        "Chegada não anuncia nova volta",
+                    );
                     close(
                         p.finishTime,
                         60 + (i ? 100 : 300) / race.maxSpeed,
@@ -767,6 +780,47 @@ for (let circuit = 0; circuit < 4; circuit++) {
         }
     }
 }
+
+for (const [circuit, id] of circuitIDs.entries()) {
+    test(`F1 ${id}: geometria em escala real sustenta duração teórica de 2–4 minutos`, () => {
+        const { ND, world, race } = game({ circuit });
+        const rules = ND.modes.formula;
+        assert.equal(rules.trackScale, 4);
+        const sectionsSum = world.circuit.sections.reduce(
+            (sum, section) =>
+                sum + section.enter + section.hold + section.leave,
+            0,
+        );
+        assert.equal(world.segments.length, sectionsSum * rules.trackScale);
+        for (const section of world.circuit.sections)
+            assert.equal(
+                world.segments.filter((seg) => seg.section === section.name)
+                    .length,
+                (section.enter + section.hold + section.leave) *
+                    rules.trackScale,
+                section.name,
+            );
+        const distance = world.trackLength * world.lapCount,
+            boostedMinimum = distance / (race.maxSpeed * 1.35),
+            nominalDuration = distance / race.maxSpeed;
+        // Limites geométricos, não promessa de tempo real com curvas/colisões:
+        // até nitro contínuo leva >= 2 min; ritmo nominal fica dentro de 4 min.
+        assert.ok(boostedMinimum >= 120, `${id}: mínimo=${boostedMinimum}s`);
+        assert.ok(nominalDuration <= 240, `${id}: nominal=${nominalDuration}s`);
+    });
+}
+
+test("F1 mundo mantém snapshot da meta no HUD e nos resultados após mudança nas regras", () => {
+    const { ND, world, race } = game();
+    assert.equal(world.lapCount, 5);
+    ND.modes.formula.lapCount = world.lapCount + 1;
+    assert.equal(world.lapCount, 5, "Mundo existente não muda de duração");
+    assert.equal(race.hudFor(0).lapCount, world.lapCount);
+    assert.ok(race.results().details.includes(`${world.lapCount} voltas`));
+    race.reset();
+    assert.equal(world.lapCount, 5, "Reset preserva a meta do mundo");
+    assert.equal(race.hudFor(0).lapCount, world.lapCount);
+});
 
 test("os quatro circuitos têm perfis e trechos característicos distintos", () => {
     const characteristic = [
@@ -921,7 +975,9 @@ for (const mode of ["classic", "formula"]) {
         play(race);
         if (mode === "formula") {
             awayFromFinish(world);
-            race.players.forEach((p) => beforeLine(race, p, 3, 100));
+            race.players.forEach((p) =>
+                beforeLine(race, p, world.lapCount, 100),
+            );
             race.update(0.1, controls(race));
         } else {
             race.players.forEach((p) => {
@@ -937,6 +993,7 @@ for (const mode of ["classic", "formula"]) {
             p.bestLap = 12;
             p.lastLap = 13;
             p.lapStarted = 25;
+            p.lapFlash = 2.4;
             p.boostT = 2;
             p.combo = 5;
             p.nitroCharges = 0;
@@ -964,6 +1021,7 @@ for (const mode of ["classic", "formula"]) {
                 "bestLap",
                 "lastLap",
                 "lapStarted",
+                "lapFlash",
                 "boostT",
                 "dead",
             ])
@@ -1017,23 +1075,113 @@ test("pickup clássico expira exatamente uma vez e volta a ficar disponível", (
     assert.equal(pk.t, 0);
 });
 
-test("F1 não termina antes da linha; terceira volta limita distância e interpola o instante", () => {
+test("nitro acompanha duração do modo: Fórmula 4,2s e Clássico 2,4s", () => {
+    for (const mode of ["classic", "formula"]) {
+        const { race, world, ND } = game({ mode });
+        play(race);
+        world.traffic = [];
+        world.syncTraffic();
+        const p = race.players[0],
+            dt = 1 / 60;
+        p.speed = race.maxSpeed * 0.5;
+        const charges = p.nitroCharges;
+        race.update(dt, { ...gas, nitro: true });
+        close(
+            p.boostT,
+            (mode === "formula" ? ND.modes.formula.boostDuration : 2.4) - dt,
+        );
+        assert.equal(p.nitroCharges, charges - 1);
+        race.update(dt, { ...gas, nitro: true });
+        assert.equal(
+            p.nitroCharges,
+            charges - 1,
+            "Segurar nitro não consome cargas extras",
+        );
+    }
+});
+
+test("syncTraffic limpa segmentos antigos sem duplicar carros ou deixar finalizados", () => {
+    const { world } = game();
+    const original = world.traffic.slice();
+    const first = original[0],
+        second = original[1];
+    world.traffic = [first, second];
+    first.z = second.z = world.trackLength / 2;
+    world.syncTraffic();
+    world.syncTraffic();
+    const shared = world.findSegment(first.z);
+    assert.equal(shared.cars.length, 2);
+    first.z = world.trackLength - 10;
+    second.finished = true;
+    world.syncTraffic();
+    assert.equal(shared.cars.length, 0);
+    assert.equal(second.seg, null);
+    assert.equal(first.seg.cars.length, 1);
+    world.traffic = [];
+    world.syncTraffic();
+    assert.ok(world.segments.every((seg) => seg.cars.length === 0));
+    world.resetTraffic(1, 1);
+    assert.equal(
+        world.segments.reduce((n, seg) => n + seg.cars.length, 0),
+        world.traffic.length,
+    );
+    assert.ok(
+        world.segments.every((seg) =>
+            seg.cars.every((car) => !original.includes(car)),
+        ),
+    );
+});
+
+for (const lap of [1, 3, 4]) {
+    test(`F1 passagem ${lap} é intermediária: avança a volta, mantém corrida aberta e decresce o aviso`, () => {
+        const { world, race } = game();
+        play(race);
+        awayFromFinish(world);
+        assert.ok(lap < world.lapCount);
+        const p = race.players[0];
+        race.elapsed = lap * 40;
+        beforeLine(race, p, lap, 250);
+        p.lapStarted = (lap - 1) * 40;
+        assert.equal(p.lapFlash, 0);
+        race.update(0.02, gas);
+        assert.equal(p.finished, false);
+        assert.equal(p.finishTime, null);
+        assert.equal(p.laps, lap + 1);
+        assert.equal(race.state, "play");
+        assert.equal(race.isOver(), false);
+        close(p.distance, world.trackLength * lap + 250);
+        close(p.position, 250);
+        close(p.lastLap, 40.01);
+        assert.ok(p.lapFlash > 0);
+        close(p.lapFlash, 2.4 - 0.02, "Aviso já consome o dt da passagem");
+        race.update(0.4, gas);
+        close(p.lapFlash, 2.4 - 0.02 - 0.4, "Aviso decresce com os efeitos");
+        race.update(2.5, { brake: true });
+        assert.equal(p.lapFlash, 0, "Aviso expira sem ficar negativo");
+        assert.equal(p.finished, false);
+    });
+}
+
+test("F1 não termina antes da linha; última volta limita distância e interpola o instante", () => {
     const { world, race } = game();
     play(race);
     awayFromFinish(world);
     race.elapsed = 42;
     const p = race.players[0];
-    beforeLine(race, p, 3, 1000);
+    beforeLine(race, p, world.lapCount, 1000);
     p.lapStarted = 30;
     race.update(0.03, gas);
     assert.equal(p.finished, false);
     assert.equal(race.isOver(), false);
-    close(p.distance, 3 * world.trackLength - 250);
+    close(p.distance, world.lapCount * world.trackLength - 250);
+    assert.equal(p.lapFlash, 0);
     race.update(0.02, gas);
     assert.equal(p.finished, true);
-    assert.equal(p.distance, 3 * world.trackLength);
+    assert.equal(race.isOver(), true);
+    assert.equal(p.distance, world.lapCount * world.trackLength);
     assert.equal(p.position, world.startLineZ);
-    assert.equal(p.laps, 3);
+    assert.equal(p.laps, world.lapCount);
+    assert.equal(p.lapFlash, 0, "Bandeirada não dispara aviso de volta");
     close(p.finishTime, 42.04);
     close(p.lastLap, 12.04);
     close(p.bestLap, 12.04);
@@ -1046,8 +1194,8 @@ test("F1 P2 cruza antes de P1 no mesmo tick: ranks e resultado seguem frações 
     awayFromFinish(world);
     race.elapsed = 60;
     const [p1, p2] = race.players;
-    beforeLine(race, p1, 3, 1800);
-    beforeLine(race, p2, 3, 600);
+    beforeLine(race, p1, world.lapCount, 1800);
+    beforeLine(race, p2, world.lapCount, 600);
     race.update(0.1, controls(race));
     close(p1.finishTime, 60.072);
     close(p2.finishTime, 60.024);
@@ -1069,8 +1217,8 @@ test("F1 piloto finalizado fica congelado até o outro terminar; fim é imutáve
     awayFromFinish(world);
     race.elapsed = 50;
     const [p1, p2] = race.players;
-    beforeLine(race, p1, 3, 100);
-    beforeLine(race, p2, 3, 10000);
+    beforeLine(race, p1, world.lapCount, 100);
+    beforeLine(race, p2, world.lapCount, 10000);
     race.update(0.02, controls(race));
     assert.equal(p1.finished, true);
     assert.equal(p2.finished, false);
@@ -1083,7 +1231,7 @@ test("F1 piloto finalizado fica congelado até o outro terminar; fim é imutáve
     assert.ok(p2.distance > secondDistance);
     close(race.elapsed, elapsed + 0.02);
     close(race.hudFor(0).elapsed, p1.finishTime);
-    beforeLine(race, p2, 3, 100);
+    beforeLine(race, p2, world.lapCount, 100);
     race.update(0.02, controls(race));
     assert.equal(race.isOver(), true);
     assert.deepEqual(racerState(p1), frozen);
@@ -1097,54 +1245,104 @@ test("F1 piloto finalizado fica congelado até o outro terminar; fim é imutáve
     assert.deepEqual(plain(race.standings()), standings);
 });
 
-test("F1 calcula última/melhor volta e repõe nitro em cada uma das três passagens", () => {
+test("F1 calcula última/melhor volta e recarrega todo o nitro nas cinco passagens", () => {
     const { world, race } = game();
     play(race);
     awayFromFinish(world);
     const p = race.players[0];
-    p.nitroCharges = 0;
-    const crossings = [12.01, 22.01, 35.01];
-    for (let lap = 1; lap <= 3; lap++) {
+    const crossings = [40.01, 78.01, 120.01, 157.01, 198.01];
+    assert.equal(crossings.length, world.lapCount);
+    let best = Infinity;
+    for (let lap = 1; lap <= world.lapCount; lap++) {
+        assert.equal(p.nitroCharges, 3);
+        // Fixture de consumo antes de CADA passagem: +1 não pode imitar recarga total.
+        p.nitroCharges = 0;
+        p.lapFlash = 0;
         race.elapsed = crossings[lap - 1] - 0.01;
         beforeLine(race, p, lap, 250);
         race.update(0.02, gas);
-        close(p.lastLap, crossings[lap - 1] - (crossings[lap - 2] || 0));
-        close(p.bestLap, lap === 1 ? 12.01 : 10);
+        const last = crossings[lap - 1] - (crossings[lap - 2] || 0);
+        best = Math.min(best, last);
+        close(p.lastLap, last);
+        close(p.bestLap, best);
         close(p.lapStarted, crossings[lap - 1]);
-        assert.equal(p.nitroCharges, lap);
-        assert.equal(p.finished, lap === 3);
+        assert.equal(p.nitroCharges, 3, `Recarga completa na passagem ${lap}`);
+        assert.equal(p.laps, Math.min(lap + 1, world.lapCount));
+        assert.equal(p.finished, lap === world.lapCount);
+        assert.equal(race.isOver(), lap === world.lapCount);
+        if (lap < world.lapCount) assert.ok(p.lapFlash > 0);
+        else assert.equal(p.lapFlash, 0);
         assert.equal(p.dead, 0, "F1 não morre com timeLeft = 0");
         assert.equal(p.timeLeft, 0);
     }
-    close(race.hudFor(0).bestLap, 10);
-    close(race.standings()[0].bestLap, 10);
-    close(race.standings()[0].lastLap, 13);
+    close(p.finishTime, crossings.at(-1));
+    close(race.hudFor(0).bestLap, 37);
+    close(race.standings()[0].bestLap, 37);
+    close(race.standings()[0].lastLap, 41);
 });
 
-test("F1 advance aceita múltiplas voltas no passo sem overshoot nem quarta volta", () => {
+test("F1 advance aceita múltiplas voltas no passo sem overshoot nem volta além da meta", () => {
     const { ND, world, race } = game();
-    const p = race.players[0];
+    const p = race.players[0],
+        count = world.lapCount,
+        secondsPerLap = 2,
+        dt = (count + 0.5) * secondsPerLap;
     p.nitroCharges = 0;
     const step = ND.modes.formula.advance(
         p,
-        world.trackLength * 3.5,
-        7,
+        world.trackLength * (count + 0.5),
+        dt,
         0,
         world,
     );
-    assert.equal(step.laps, 3);
-    assert.equal(step.moved, world.trackLength * 3);
-    close(step.dt, 6);
-    close(p.finishTime, 6);
-    close(p.lastLap, 2);
-    close(p.bestLap, 2);
+    assert.equal(step.laps, count);
+    assert.equal(step.moved, world.trackLength * count);
+    close(step.dt, count * secondsPerLap);
+    close(p.finishTime, count * secondsPerLap);
+    close(p.lastLap, secondsPerLap);
+    close(p.bestLap, secondsPerLap);
     assert.equal(p.nitroCharges, 3);
-    assert.equal(p.laps, 3);
+    assert.equal(p.laps, count);
+    assert.equal(p.finished, true);
     const frozen = racerState(p);
-    const after = ND.modes.formula.advance(p, world.trackLength, 5, 7, world);
+    const after = ND.modes.formula.advance(p, world.trackLength, 5, dt, world);
     assert.equal(after.moved, 0);
     assert.equal(after.dt, 0);
     assert.deepEqual(racerState(p), frozen);
+});
+
+test("F1 advance usa a meta do mundo e mantém fallback do modo para mundo sem lapCount", () => {
+    const { ND, world, race } = game();
+    for (const fixture of [
+        { trackLength: world.trackLength, lapCount: world.lapCount + 1 },
+        { trackLength: world.trackLength },
+    ]) {
+        race.reset();
+        const p = race.players[0],
+            count = fixture.lapCount ?? ND.modes.formula.lapCount;
+        ND.modes.formula.advance(
+            p,
+            fixture.trackLength * (count - 0.5),
+            (count - 0.5) * 2,
+            0,
+            fixture,
+        );
+        assert.equal(p.finished, false);
+        assert.equal(p.laps, count);
+        const step = ND.modes.formula.advance(
+            p,
+            fixture.trackLength,
+            2,
+            (count - 0.5) * 2,
+            fixture,
+        );
+        assert.equal(p.finished, true);
+        assert.equal(p.distance, fixture.trackLength * count);
+        assert.equal(p.laps, count);
+        assert.equal(step.laps, 1);
+        close(step.dt, 1);
+        close(p.finishTime, count * 2);
+    }
 });
 
 test("F1 classificação pura ordena por chegada/progresso sem mutar entradas", () => {
@@ -1188,6 +1386,8 @@ for (let difficulty = 0; difficulty < 3; difficulty++) {
         ][difficulty];
         for (const [key, value] of Object.entries(expected))
             assert.equal(classic.race.difficulty[key], value, key);
+        assert.equal(classic.world.lapCount, 0);
+        assert.equal(classic.race.hudFor(0).lapCount, 0);
         assert.equal(classic.world.traffic.length, expected.cars);
         assert.equal(classic.race.players[0].timeLeft, expected.time);
         assert.equal(classic.race.players[0].nitroCharges, expected.start);
@@ -1229,11 +1429,14 @@ for (let circuit = 0; circuit < 4; circuit++) {
                     numPlayers,
                 });
                 const epoch = 123,
-                    dt = 0.25;
+                    dt = 0.25,
+                    distance = world.trackLength * world.lapCount,
+                    estimatedDuration = distance / race.maxSpeed;
                 let elapsed = epoch;
                 // Limite generoso, mas finito: impede hangs se uma IA não chega.
                 const limit = Math.ceil(
-                    ((3 * world.trackLength) / (race.maxSpeed * 0.3) + 10) / dt,
+                    Math.max(estimatedDuration * 3, estimatedDuration + 30) /
+                        dt,
                 );
                 for (
                     let tick = 0;
@@ -1252,7 +1455,16 @@ for (let circuit = 0; circuit < 4; circuit++) {
                     world.traffic.forEach((car, i) => {
                         assert.ok(
                             car.progress >= before[i].progress &&
-                                car.progress <= world.trackLength * 3,
+                                car.progress <= distance,
+                        );
+                        assert.equal(
+                            car.laps,
+                            Math.min(
+                                world.lapCount,
+                                Math.floor(car.progress / world.trackLength) +
+                                    1,
+                            ),
+                            "Voltas da IA acompanham a distância em cada passo",
                         );
                         if (car.finished && !before[i].finished) {
                             assert.ok(
@@ -1269,7 +1481,9 @@ for (let circuit = 0; circuit < 4; circuit++) {
                     `d${difficulty}/${numPlayers}P: todas devem terminar`,
                 );
                 for (const car of world.traffic) {
-                    assert.equal(car.progress, world.trackLength * 3);
+                    assert.equal(car.progress, distance);
+                    assert.equal(car.distance, distance);
+                    assert.equal(car.laps, world.lapCount);
                     assert.equal(car.z, world.startLineZ);
                     assert.equal(car.speed, 0);
                     assert.equal(car.seg, null);
@@ -1302,8 +1516,11 @@ test("F1 world interpola chegadas de todas as IAs dentro do mesmo tick", () => {
     const cars = Array.from(world.traffic);
     cars.forEach((car, i) => {
         const remaining = 100 + i * 50;
-        car.progress = car.distance = 3 * world.trackLength - remaining;
+        car.progress = car.distance =
+            world.lapCount * world.trackLength - remaining;
         car.z = world.trackLength - remaining;
+        car.laps = world.lapCount;
+        car.lapStarted = 60;
         car.speed = car.targetSpeed;
         car.launchDelay = 0;
         const expected = 80 + remaining / car.speed;
@@ -1316,6 +1533,9 @@ test("F1 world interpola chegadas de todas as IAs dentro do mesmo tick", () => {
         });
         assert.equal(car.finished, true);
         close(car.finishTime, expected, `IA ${i}`);
+        close(car.lastLap, expected - 60, `Última volta da IA ${i}`);
+        assert.equal(car.laps, world.lapCount);
+        assert.equal(car.progress, world.trackLength * world.lapCount);
         assert.equal(car.seg, null);
     });
 });
@@ -1324,19 +1544,28 @@ test("F1 integração publica voltas e melhor volta das IAs no HUD/resultados", 
     const { world, race } = game();
     play(race);
     // Humano parado mantém a corrida aberta enquanto o pelotão completa a prova.
+    const dt = 0.25,
+        estimatedDuration =
+            (world.trackLength * world.lapCount) / race.maxSpeed,
+        limit = Math.ceil(
+            Math.max(estimatedDuration * 3, estimatedDuration + 30) / dt,
+        );
     for (
         let tick = 0;
-        tick < 1000 && world.traffic.some((car) => !car.finished);
+        tick < limit && world.traffic.some((car) => !car.finished);
         tick++
     )
-        race.update(0.25, {});
-    assert.ok(world.traffic.every((car) => car.finished));
+        race.update(dt, {});
+    assert.ok(
+        world.traffic.every((car) => car.finished),
+        `Todas as IAs devem terminar em até ${limit * dt}s de simulação`,
+    );
     const table = race.standings().filter((entry) => !entry.isPlayer);
     assert.equal(table.length, 11);
     for (const entry of table) {
         assert.equal(
             entry.laps,
-            3,
+            world.lapCount,
             "Voltas da IA devem acompanhar o progresso físico",
         );
         assert.ok(
@@ -1346,7 +1575,7 @@ test("F1 integração publica voltas e melhor volta das IAs no HUD/resultados", 
         assert.ok(entry.bestLap <= entry.lastLap);
         close(
             entry.distance,
-            3 * world.trackLength,
+            world.lapCount * world.trackLength,
             "distância final publicada da IA",
         );
     }

@@ -7,8 +7,6 @@
             bindsTrigger = null,
             rows = [];
         var circuitHints = [];
-        var formulaNotice =
-            "Monopostos retrô · 3 voltas · 12 pilotos · Circuitos inspirados nos reais";
         var definitions = [
             {
                 key: "mode",
@@ -202,13 +200,20 @@
         }
         function refresh() {
             var settings = actions.getSettings(),
-                formula = settings.mode === "formula";
+                formula = settings.mode === "formula",
+                lapCount = ND.modes.formula.lapCount,
+                formulaNotice =
+                    "Monopostos retrô · " +
+                    lapCount +
+                    " voltas · 12 pilotos · Circuitos inspirados nos reais";
             document.body.classList.toggle("two", settings.numPlayers === 2);
             text("menuTagline", formula ? "O GRID É SEU." : "A NOITE É SUA.");
             text(
                 "menuEdition",
                 formula
-                    ? "4 CIRCUITOS · 3 VOLTAS · 12 PILOTOS"
+                    ? "4 CIRCUITOS · " +
+                          lapCount +
+                          " VOLTAS · 12 PILOTOS · 2–4 MIN"
                     : "8 CENÁRIOS · 4 FAIXAS · 1–2 PILOTOS",
             );
             text(

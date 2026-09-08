@@ -36,6 +36,7 @@
             sunPulse,
             curBiome,
             checkpointFlash,
+            lapFlash,
             pDead,
             trackLength,
             BIOMES,
@@ -69,6 +70,7 @@
             sunPulse = frame.sunPulse;
             curBiome = frame.curBiome;
             checkpointFlash = frame.checkpointFlash;
+            lapFlash = frame.lapFlash;
             pDead = frame.pDead;
             trackLength = frame.world.trackLength;
             BIOMES = frame.world.BIOMES;
@@ -629,7 +631,35 @@
                     "center",
                     true,
                 );
-            }
+            } else if (lapFlash > 0) renderLapNotice(u, m, lap);
+        }
+
+        function renderLapNotice(u, m, lap) {
+            var cy = H * 0.48,
+                width = Math.min(W - m * 2, u * 34),
+                textW = width - u * 2,
+                lastLap = lap === race.lapCount,
+                counter = "VOLTA " + lap + " / " + race.lapCount;
+            hudPanel(W / 2 - width / 2, cy - u * 3.2, width, u * 8, u * 0.7);
+            hudLabel(
+                lastLap ? "ÚLTIMA VOLTA" : counter,
+                W / 2,
+                cy + (lastLap ? 0 : u),
+                u * 2.6,
+                "#ffffff",
+                "center",
+                textW,
+            );
+            if (lastLap)
+                hudLabel(
+                    counter,
+                    W / 2,
+                    cy + u * 2.7,
+                    u * 1.6,
+                    "#9df9ff",
+                    "center",
+                    textW,
+                );
         }
 
         function renderStartLights(u, m) {

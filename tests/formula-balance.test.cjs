@@ -66,7 +66,13 @@ function benchmark(circuit, difficulty, seed, nitro) {
     const p = reference.players[0];
     let firstLead = null;
     const ranks = {};
-    for (let tick = 0; tick < 5400; tick++) {
+    const crossings = [];
+    const raceLength = referenceWorld.trackLength * referenceWorld.lapCount;
+    const maxTicks = Math.ceil(
+        (raceLength / (reference.maxSpeed * 0.65) + 30) / DT,
+    );
+    for (let tick = 0; tick < maxTicks; tick++) {
+        const previousLapStart = p.lapStarted;
         world.updateTraffic(DT, {
             mode: "formula",
             maxSpeed: reference.maxSpeed,
@@ -89,6 +95,19 @@ function benchmark(circuit, difficulty, seed, nitro) {
             Math.abs(p.playerX) < 1,
             "Referência não pode perder tempo fora da pista",
         );
+        if (p.lapStarted !== previousLapStart) {
+            crossings.push(p.lapStarted);
+            assert.equal(
+                p.finished,
+                crossings.length === referenceWorld.lapCount,
+                "A prova só termina após completar todas as voltas",
+            );
+            if (!p.finished)
+                assert.ok(
+                    p.lapFlash > 0,
+                    "Cada nova volta precisa ser sinalizada",
+                );
+        }
         const rank =
             1 +
             world.traffic.filter((car) =>
@@ -104,6 +123,19 @@ function benchmark(circuit, difficulty, seed, nitro) {
         p.finished && world.traffic.every((car) => car.finished),
         "Todos devem terminar",
     );
+    assert.equal(crossings.length, referenceWorld.lapCount);
+    assert.ok(
+        crossings[0] >= 25,
+        "A primeira volta não pode passar em poucos segundos",
+    );
+    assert.ok(
+        p.finishTime >= 120 && p.finishTime <= 240,
+        `Uma prova limpa deve durar de 2 a 4 minutos, não ${p.finishTime.toFixed(1)}s`,
+    );
+    assert.ok(
+        raceLength / (reference.maxSpeed * 1.35) >= 120,
+        "Nem nitro contínuo teórico pode encurtar a corrida para menos de dois minutos",
+    );
     return {
         firstLead,
         ranks,
@@ -112,7 +144,9 @@ function benchmark(circuit, difficulty, seed, nitro) {
         lastTime: Math.max(...world.traffic.map((car) => car.finishTime)),
         // Confirma que o circuito e as regras do jogador não foram encurtados.
         distance: p.distance,
-        raceLength: referenceWorld.trackLength * 3,
+        raceLength,
+        lapCount: referenceWorld.lapCount,
+        firstLapTime: crossings[0],
     };
 }
 

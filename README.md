@@ -44,6 +44,7 @@ de carros e caminhões, derrapagens, nitro, colisões, combos e pontuação.
 - Pontos por distância, derrapagens, coletas de nitro e ultrapassagens por pouco
   ("QUASE!"), com multiplicador de combo. Colisões reduzem velocidade e quebram o combo.
 - Cápsulas na pista repõem uma carga de nitro, respeitando a capacidade da dificuldade.
+- Cada ativação de nitro dura **2,4 s**, sem alteração no Clássico.
 - Em dois jogadores, cada um tem seu próprio tempo e pontuação; a partida termina
   quando o tempo de todos se esgota. A classificação é por pontuação.
 
@@ -57,18 +58,27 @@ de carros e caminhões, derrapagens, nitro, colisões, combos e pontuação.
 
 - **Quatro circuitos:** Interlagos, Mônaco, Monza e Suzuka. São interpretações arcade
   com trechos característicos, **não réplicas geométricas oficiais** dos autódromos.
+  Os trechos são **quatro vezes mais longos**, sem alterar a velocidade máxima dos carros.
 - **12 pilotos no total, incluindo os humanos:** um jogador e 11 IAs ou dois
   jogadores e 10 IAs. Há três dificuldades.
-- **Três voltas**, precedidas por contagem de largada de **três segundos**, durante
+- **Cinco voltas**, precedidas por contagem de largada de **três segundos**, durante
   a qual física, tráfego e relógio da prova ficam parados.
+- **Duração aproximada de 2–4 minutos**, dependendo da habilidade e da pista.
+  É uma estimativa, não um tempo forçado: a corrida encerra por voltas, e erros
+  ou paradas podem prolongá-la além dessa faixa.
 - **Sem cronômetro regressivo de tempo-limite.** O tempo decorrido serve à
   cronometragem da prova, da última volta e da melhor volta.
 - **Três pinturas originais:** Rubi, Ouro e Azul; câmera externa e **cockpit F1**
   próprio para o monoposto.
-- **Nitro:** começa com três cargas, capacidade máxima de três e reposição de uma
-  carga por volta completada. Não há cápsulas de nitro na pista deste modo.
+- **Nitro exclusivo da Fórmula:** cada ativação dura **4,2 s**; começa com três
+  cargas, capacidade máxima de três e **reposição completa para três cargas por
+  volta completada**, não uma carga adicional. Compensa os trechos mais longos
+  sem enfraquecer a IA. Não há cápsulas de nitro na pista deste modo.
 - Classificação por progresso durante a prova e por tempo de chegada para quem
   terminou, com posição, voltas e cronometragem no HUD e resultados.
+- Ao completar uma volta, o HUD mostra por **2,4 s** a volta física atual, como
+  **VOLTA 2 / 5**; na última, destaca **ÚLTIMA VOLTA** junto do contador.
+  Não há aviso de checkpoint com bônus de segundos na Fórmula.
 - Adversários com ritmos e estilos próprios de largada, aceleração e curvas.
   Procuram trajetórias livres para ultrapassar, respeitam carros próximos e os
   jogadores, e freiam quando não há espaço. Sem teletransportes ou recuperação
@@ -81,7 +91,7 @@ de carros e caminhões, derrapagens, nitro, colisões, combos e pontuação.
   nitro; isso é definido pelo piloto/dificuldade, nunca por quem está ganhando.
 - Em congestionamentos diante de jogadores parados, adversários lado a lado
   cedem espaço para liberar um corredor, sem atravessar uns aos outros.
-- A prova termina quando todos os humanos completam as três voltas. Em tela
+- A prova termina quando todos os humanos completam as cinco voltas. Em tela
   dividida, quem chegou aguarda o outro; IAs ainda não finalizadas aparecem como
   **EM PISTA**, sem receber um tempo de chegada fictício.
 
@@ -143,15 +153,27 @@ O catálogo da Fórmula é gerado sob demanda na primeira seleção do modo.
 
 - `ND.createWorld(SPR, settings)` cria o mundo; `ND.createRace(world, SPR, settings, sfx)`
   cria a simulação que aplica as regras de `ND.modes.classic` ou `ND.modes.formula`.
+- `ND.modes.formula` é a fonte única das regras de extensão da prova:
+  `mode.lapCount = 5` define o total de voltas e `mode.trackScale = 4` alonga os
+  trechos dos circuitos sem alterar a velocidade máxima. `world.lapCount` recebe
+  o total do modo e o fornece à simulação e a `frame.race.lapCount` no HUD;
+  os textos do menu consultam `ND.modes.formula.lapCount`, sem repetir o número.
+  `mode.configure` define `boostDuration = 4.2` para a Fórmula; o Clássico mantém 2,4 s.
 - `p.position` em `race.players` é a **posição física** do jogador na pista.
   Para `scene.render(frame)`, `main.js` prepara `frame.position` subtraindo
   `camDist * REFDEPTH`, com retorno circular pelo comprimento da pista. Essa é a
   **posição da câmera**, não uma alteração na física. Antes de desenhar cockpit e
   HUD, `main.js` restaura `frame.position = p.position`.
+- O HUD lê `frame.laps` de `p.laps` e `frame.lapFlash` de `p.lapFlash`, copiados
+  pelo `Object.assign` do `main.js`. A simulação controla os 2,4 s do aviso;
+  renderizar não decrementa o efeito nem altera o frame. A prioridade dos avisos
+  é **bandeirada > contagem de largada > VAI! > aviso de volta**.
 - O loop usa passos fixos de `1 / 60` s. Em cada tick ativo, a corrida atualiza o
   **tráfego compartilhado uma única vez**, antes dos jogadores, e avança o relógio
   da prova uma única vez após eles — nunca por jogador ou viewport. Renderizar
   duas telas não duplica a velocidade da IA nem o tempo decorrido.
+  A associação dos carros à pista limpa apenas os segmentos previamente ocupados,
+  sem varrer todo o circuito ampliado a cada quadro.
 - O argumento `elapsed` de `world.updateTraffic` e das regras de avanço dos modos
   representa o **início do passo**, permitindo interpolar os instantes de passagem
   de volta e chegada dentro do tick.
@@ -180,10 +202,21 @@ largada, progressão da dificuldade e possibilidade de vitória com uma corrida
 sem erros. É uma referência otimista de desempenho, não uma previsão do resultado
 de toda partida com tráfego e colisões.
 
+Os testes de duração verificam as cinco passagens pela linha, a faixa de 120–240 s
+para a referência em pista livre e um **limite inferior teórico**:
+distância total (`world.trackLength * world.lapCount`)
+dividida pela maior velocidade permitida com nitro. Esse cenário idealizado ignora
+aceleração, curvas e colisões e serve para detectar provas curtas demais; não
+impõe um tempo mínimo à simulação. Nas simulações completas, o jogador em pista
+livre terminou em aproximadamente **2min35s a 3min27s**, com e sem nitro, conforme
+o circuito. Colisões, erros e paradas podem aumentar esses tempos.
+
 O Canvas simulado verifica chamadas e estados, não rasteriza pixels. A suíte
 opcional `tests/browser.smoke.cjs` executa o jogo real no Chromium: abertura por
 `file://`, troca de modo, largada, teclado, nitro, pausa, cockpit, 2P, resultado,
-reinício e layout de 320/390 pixels. Esse smoke foi executado com sucesso.
+reinício e layout de 320/390 pixels. O smoke também verifica que a primeira e a
+terceira passagens não encerram a prova, confere os avisos reais desenhados no
+canvas e valida a bandeirada somente ao completar a quinta volta.
 
 Para executá-lo, use `node tests/browser.smoke.cjs` em um ambiente com Playwright
 e Chromium instalados; pode-se passar o caminho de uma instalação do Playwright
@@ -195,6 +228,7 @@ físicos e ergonomia em celulares ainda requerem validação nos dispositivos re
 
 - [ ] Abrir por `file://` com `js/` e `css/` presentes; conferir menus e ausência de erros de carregamento.
 - [ ] Clássico: testar tempo/checkpoints, pontuação/combos, nitro, colisões e fim por tempo esgotado.
-- [ ] Fórmula: percorrer os quatro circuitos, três pinturas, largada, três voltas, recarga de nitro, classificação e resultados.
+- [ ] Fórmula: percorrer os quatro circuitos, três pinturas, largada, cinco voltas, nitro de 4,2 s com recarga completa, classificação e resultados.
+- [ ] Fórmula: conferir a estimativa de 2–4 minutos, os avisos de volta/última volta e a prioridade dos avisos, inclusive em 390 × 422 e 320 pixels de largura.
 - [ ] Validar 1P/2P, câmera externa/cockpits, resize/orientação e qualidades, incluindo oclusão e HUD.
 - [ ] Validar teclado, toque, gamepads/remapeamento, áudio/mute, pausa/retomada, reinício e troca de modo pelo menu.

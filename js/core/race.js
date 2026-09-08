@@ -129,6 +129,7 @@
                 ctrl: readControl(),
                 finishTime: null,
                 lastLap: 0,
+                lapFlash: 0,
                 bestLap: 0,
                 lapStarted: 0,
                 finished: false,
@@ -270,7 +271,7 @@
                     p.speed > maxSpeed * 0.2
                 ) {
                     p.nitroCharges--;
-                    p.boostT = 2.4;
+                    p.boostT = physics.boostDuration || 2.4;
                 }
                 p.nitroLatch = 1;
             } else p.nitroLatch = 0;
@@ -477,6 +478,7 @@
             p.shake = Math.max(0, p.shake - dt * 2.4);
             p.flash = Math.max(0, p.flash - dt * 2.6);
             p.checkpointFlash = Math.max(0, p.checkpointFlash - dt);
+            p.lapFlash = Math.max(0, p.lapFlash - dt);
             p.fovDyn = lerp(
                 p.fovDyn,
                 sp * 0.7 + p.boosting * 0.7,
@@ -556,7 +558,7 @@
                 var progress = demo
                     ? { moved: step.moved, dt: dt, checkpoints: 0, laps: 0 }
                     : mode.advance(p, step.moved, dt, race.elapsed, world, DF);
-                // Elimina resíduos de ponto flutuante acumulados nas três voltas.
+                // Elimina resíduos de ponto flutuante acumulados nas voltas.
                 p.position = p.finished
                     ? world.startLineZ
                     : increase(p.position, progress.moved, world.trackLength);
@@ -582,7 +584,11 @@
                     }
                     for (var cp = 0; cp < progress.checkpoints; cp++)
                         sound("checkpoint");
-                    if (progress.laps) sound("checkpoint");
+                    if (progress.laps) {
+                        sound("checkpoint");
+                        if (mode.id === "formula" && !p.finished)
+                            p.lapFlash = 2.4;
+                    }
                 }
                 effects(p, progress.dt, step);
             });
@@ -651,7 +657,7 @@
             return {
                 elapsed: p.finished ? p.finishTime : race.elapsed,
                 countdown: race.countdown,
-                lapCount: mode.lapCount,
+                lapCount: world.lapCount,
                 rank: p.rank,
                 total: mode.total || numPlayers,
                 finished: p.finished,

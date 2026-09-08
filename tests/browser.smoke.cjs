@@ -22,12 +22,22 @@ const { chromium } = require(process.argv[2] || "playwright");
             let callback,
                 time = 1000,
                 factory;
+            const fillText = CanvasRenderingContext2D.prototype.fillText;
+            window.__canvasTexts = [];
+            CanvasRenderingContext2D.prototype.fillText = function (
+                text,
+                ...args
+            ) {
+                window.__canvasTexts.push(String(text));
+                return fillText.call(this, text, ...args);
+            };
             window.requestAnimationFrame = (next) => {
                 callback = next;
                 return 1;
             };
             window.__frames = (count) => {
                 for (let i = 0; i < count; i++) {
+                    window.__canvasTexts.length = 0;
                     time += 1000 / 60;
                     callback(time);
                 }
@@ -58,12 +68,35 @@ const { chromium } = require(process.argv[2] || "playwright");
                 mode: window.__race.mode,
                 speeds: window.__race.players.map((p) => p.speed),
                 distances: window.__race.players.map((p) => p.distance),
+                laps: window.__race.players.map((p) => p.laps),
+                lapCount: window.__race.world.lapCount,
+                hudLapCounts: window.__race.players.map(
+                    (_, i) => window.__race.hudFor(i).lapCount,
+                ),
+                lapFlashes: window.__race.players.map((p) => p.lapFlash),
+                finished: window.__race.players.map((p) => p.finished),
+                finishTimes: window.__race.players.map((p) => p.finishTime),
+                ranks: window.__race.players.map((p) => p.rank),
                 nitro: window.__race.players[0].nitroCharges,
             }));
         await frames(3);
         await option("GRÁFICOS: MÉDIA").click();
         await option("SOM: MUDO").click();
         await option("MODO: FÓRMULA 1").click();
+        const totalLaps = await page.evaluate(
+            () => window.NeonDrive.modes.formula.lapCount,
+        );
+        assert.ok(
+            (await page.locator("#menuEdition").textContent()).includes(
+                `${totalLaps} VOLTAS`,
+            ),
+        );
+        assert.ok(
+            (await page.locator("#menuRaceHint").textContent()).includes(
+                `${totalLaps} voltas`,
+            ),
+        );
+        assert.equal((await snapshot()).lapCount, totalLaps);
         assert.equal(
             await page.locator("#menuPanel-circuit option").count(),
             4,
@@ -116,22 +149,99 @@ const { chromium } = require(process.argv[2] || "playwright");
         await page.keyboard.up("w");
         assert.ok((await snapshot()).speeds.every((speed) => speed > 1000));
         await capture("formula-split");
-        // Cruza a linha física com P2 antes de P1; o próximo frame mostra resultado real.
-        await page.evaluate(() => {
-            const race = window.__race,
-                length = race.world.trackLength;
-            race.elapsed = 90;
-            race.players.forEach((p, i) => {
-                p.distance = 3 * length - (i ? 100 : 200);
-                p.position = length - (i ? 100 : 200);
-                p.speed = race.maxSpeed;
-                p.laps = 3;
-                p.lapStarted = 60;
-                p.bestLap = 29;
-            });
-        });
+        // Fixtures pontuais cruzam a linha pela física real do main; não é
+        // necessário rasterizar minutos inteiros para verificar cada fronteira.
+        async function beforeCrossing(lap, elapsed) {
+            await page.evaluate(
+                ({ lap, elapsed }) => {
+                    const race = window.__race,
+                        length = race.world.trackLength;
+                    race.elapsed = elapsed;
+                    race.world.traffic.forEach((car, i) => {
+                        car.z = length / 2 + i * race.world.SEGLEN * 2;
+                        car.progress = car.distance = car.z;
+                    });
+                    race.world.syncTraffic();
+                    race.players.forEach((p, i) => {
+                        const total = race.world.lapCount,
+                            crossingDistance = length * (lap ?? total),
+                            remaining = i ? 100 : 200;
+                        p.distance = crossingDistance - remaining;
+                        p.position = length - remaining;
+                        p.speed = race.maxSpeed;
+                        p.playerX = i ? 0.46 : -0.46;
+                        p.laps = lap ?? total;
+                        p.lapStarted = elapsed - 36;
+                        p.bestLap = 35;
+                        p.nitroCharges = 0;
+                        p.boostT = p.boosting = p.lapFlash = 0;
+                    });
+                },
+                { lap, elapsed },
+            );
+        }
+        for (const [lap, elapsed] of [
+            [1, 40],
+            [3, 120],
+            [totalLaps - 1, 160],
+        ]) {
+            await beforeCrossing(lap, elapsed);
+            await frames(3);
+            state = await snapshot();
+            assert.equal(
+                state.state,
+                "play",
+                `Passagem ${lap} não encerra a corrida`,
+            );
+            assert.deepEqual(state.laps, [lap + 1, lap + 1]);
+            assert.deepEqual(state.finished, [false, false]);
+            assert.deepEqual(state.finishTimes, [null, null]);
+            assert.deepEqual(state.hudLapCounts, [totalLaps, totalLaps]);
+            assert.ok(
+                state.lapFlashes.every((flash) => flash > 0 && flash < 2.4),
+            );
+            assert.equal(state.nitro, 3);
+            assert.ok(await page.locator("#over").isHidden());
+            const texts = await page.evaluate(() => window.__canvasTexts);
+            assert.ok(
+                texts.includes(`${lap + 1}/${totalLaps}`),
+                "HUD mostra a volta atual/total",
+            );
+            assert.ok(
+                texts.includes(`VOLTA ${lap + 1} / ${totalLaps}`),
+                "Canvas desenha o aviso de volta",
+            );
+            assert.equal(texts.includes("ÚLTIMA VOLTA"), lap + 1 === totalLaps);
+            assert.ok(
+                !texts.includes("BANDEIRADA"),
+                "Passagem intermediária não é chegada",
+            );
+            await capture(`formula-lap-${lap + 1}`);
+        }
+        // Última passagem usa a meta do mundo, com P2 antes de P1 e tempo plausível.
+        await beforeCrossing(null, 180);
         await frames(3);
-        assert.equal((await snapshot()).state, "over");
+        state = await snapshot();
+        assert.equal(state.state, "over");
+        assert.deepEqual(state.finished, [true, true]);
+        assert.deepEqual(state.laps, [totalLaps, totalLaps]);
+        assert.deepEqual(state.lapFlashes, [0, 0]);
+        assert.deepEqual(state.ranks, [2, 1]);
+        assert.ok(
+            state.finishTimes.every(
+                (time) => time > 180 && time < 180 + 1 / 60,
+            ),
+        );
+        assert.ok(state.finishTimes[1] < state.finishTimes[0]);
+        assert.ok(await page.locator("#over").isVisible());
+        const finishTexts = await page.evaluate(() => window.__canvasTexts);
+        assert.ok(finishTexts.includes("BANDEIRADA"));
+        assert.ok(!finishTexts.includes(`VOLTA ${totalLaps} / ${totalLaps}`));
+        assert.ok(
+            (await page.locator("#finalStats").textContent()).includes(
+                `${totalLaps} voltas`,
+            ),
+        );
         assert.match(
             await page.locator("#overLabel").textContent(),
             /JOGADOR 2/,
@@ -143,6 +253,10 @@ const { chromium } = require(process.argv[2] || "playwright");
         assert.equal(state.countdown, 3);
         assert.equal(state.elapsed, 0);
         assert.ok(state.distances.every((d) => d === 0));
+        assert.deepEqual(state.laps, [1, 1]);
+        assert.deepEqual(state.lapFlashes, [0, 0]);
+        assert.deepEqual(state.finished, [false, false]);
+        assert.deepEqual(state.finishTimes, [null, null]);
         await page.keyboard.press("p");
         await page.locator("#btnPauseMenu").click();
         await option("MODO: CLÁSSICO").click();
@@ -182,7 +296,7 @@ const { chromium } = require(process.argv[2] || "playwright");
         assert.equal(await page.locator("#err").textContent(), "");
         assert.deepEqual(errors, []);
         console.log(
-            "Smoke aprovado: file://, 2 modos, controles, largada, nitro, pausa, cockpit, 2P, resultado, reset e mobile 320/390.",
+            `Smoke aprovado: file://, 2 modos, controles, largada, nitro, pausa, cockpit, 2P, ${totalLaps} voltas, avisos no canvas, resultado, reset e mobile 320/390.`,
         );
         console.log("Capturas:", screenshots.join("\n"));
     } finally {

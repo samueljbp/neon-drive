@@ -1,8 +1,10 @@
 (function (ND) {
     "use strict";
 
-    var LAP_COUNT = 3,
-        TOTAL = 12;
+    var LAP_COUNT = 5,
+        TOTAL = 12,
+        TRACK_SCALE = 4,
+        BOOST_DURATION = 4.2;
 
     function configure(world, difficulty) {
         var maxSpeed = 25000;
@@ -16,6 +18,7 @@
                 cent: 0.2,
             }),
             accelRate: maxSpeed / 3.4,
+            boostDuration: BOOST_DURATION,
             brakeRate: -maxSpeed / 1.35,
             decelRate: -maxSpeed / 6.5,
             offRoadDecel: -maxSpeed / 2.2,
@@ -28,14 +31,15 @@
     function advance(p, moved, dt, elapsed, world) {
         if (p.finished) return { moved: 0, dt: 0, checkpoints: 0, laps: 0 };
         var length = world.trackLength,
-            finish = length * LAP_COUNT;
+            lapCount = world.lapCount || LAP_COUNT,
+            finish = length * lapCount;
         var before = p.distance,
             actual = Math.min(moved, Math.max(0, finish - before));
         var end = Math.min(finish, before + actual),
             crossed = 0;
         for (
             var lap = Math.floor(before / length) + 1;
-            lap <= LAP_COUNT && lap * length <= end;
+            lap <= lapCount && lap * length <= end;
             lap++
         ) {
             var crossing =
@@ -44,11 +48,11 @@
             p.lastLap = crossing - p.lapStarted;
             if (!p.bestLap || p.lastLap < p.bestLap) p.bestLap = p.lastLap;
             p.lapStarted = crossing;
-            p.nitroCharges = Math.min(3, p.nitroCharges + 1);
+            p.nitroCharges = 3;
             crossed++;
         }
         p.distance = end;
-        p.laps = Math.min(LAP_COUNT, Math.floor(end / length) + 1);
+        p.laps = Math.min(lapCount, Math.floor(end / length) + 1);
         var activeDt = moved > 0 ? (dt * actual) / moved : dt;
         if (end >= finish) {
             p.finished = true;
@@ -120,6 +124,8 @@
             headline: winner.rank + "º / " + TOTAL,
             details:
                 (circuit ? circuit.name + " · " : "") +
+                race.world.lapCount +
+                " voltas · " +
                 "Tempo " +
                 formatTime(winner.finishTime) +
                 " · Melhor volta " +
@@ -133,6 +139,8 @@
         id: "formula",
         countdown: 3,
         lapCount: LAP_COUNT,
+        trackScale: TRACK_SCALE,
+        boostDuration: BOOST_DURATION,
         total: TOTAL,
         configure: configure,
         advance: advance,

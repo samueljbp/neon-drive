@@ -704,7 +704,8 @@ test("IAs finalizadas e humanos finalizados/mortos são excluídos dos obstácul
         speed: 18000,
     });
     place(env.world, finished, {
-        progress: 3 * env.world.trackLength,
+        progress: env.world.lapCount * env.world.trackLength,
+        laps: env.world.lapCount,
         finished: true,
         finishTime: 30,
     });
@@ -944,10 +945,10 @@ test("plan produz snapshot repetível sem modificar carros, perfis ou associaç�
     }
 });
 
-// Pausa/countdown, grid completo e conclusão de três voltas já são cobertos em
+// Pausa/countdown, grid completo e conclusão da meta já são cobertos em
 // game.test.cjs; aqui só há simulação focada, finita, sem timers ou rasterização.
 
-test("grid completo encontra passagem entre dois humanos parados e termina as três voltas", () => {
+test("grid completo encontra passagem entre dois humanos parados e termina todas as voltas", () => {
     const { world } = setup({ seed: 1, difficulty: 0, numPlayers: 2 });
     const players = [-0.46, 0.46].map((playerX) =>
         Object.freeze({
@@ -957,7 +958,13 @@ test("grid completo encontra passagem entre dois humanos parados e termina as tr
             sprite: world.traffic[0].sprite,
         }),
     );
-    for (let i = 0; i < 7200 && world.traffic.some((c) => !c.finished); i++) {
+    // Distância total a 50% da velocidade nominal + 30s para largada/desvios.
+    // O passo e as margens de colisão continuam iguais; só o horizonte cresce.
+    const limit = Math.ceil(
+        ((world.trackLength * world.lapCount) / (MAX_SPEED * 0.5)) * 60 +
+            30 * 60,
+    );
+    for (let i = 0; i < limit && world.traffic.some((c) => !c.finished); i++) {
         tick(world, i, { players });
         const active = world.traffic.filter((c) => !c.finished);
         active.forEach((a, index) => {
@@ -969,4 +976,9 @@ test("grid completo encontra passagem entre dois humanos parados e termina as tr
         world.traffic.every((c) => c.finished),
         `Não pode formar fila presa na chegada: ${JSON.stringify(carsState(world))}`,
     );
+    for (const car of world.traffic) {
+        assert.equal(car.laps, world.lapCount);
+        assert.equal(car.progress, world.trackLength * world.lapCount);
+        assert.ok(car.finishTime > 0 && car.finishTime <= limit * DT);
+    }
 });

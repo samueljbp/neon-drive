@@ -14,6 +14,7 @@
             easeIn = U.easeIn,
             easeInOut = U.easeInOut;
         var mode = settings.mode === "formula" ? "formula" : "classic";
+        var formulaRules = ND.modes.formula;
         var diff = Number.isInteger(settings.difficulty)
             ? clamp(settings.difficulty, 0, 2)
             : 1;
@@ -24,7 +25,8 @@
 
         /* ---------- construção da pista ---------- */
         var segments = [],
-            trackLength = 0;
+            trackLength = 0,
+            occupiedSegments = [];
         var SEGLEN = 200,
             RUMBLE = 3,
             ROADW = mode === "formula" ? 2600 : 3200,
@@ -63,6 +65,7 @@
         var world = {
             segments: segments,
             trackLength: trackLength,
+            lapCount: mode === "formula" ? formulaRules.lapCount : 0,
             ROADW: ROADW,
             SEGLEN: SEGLEN,
             LANES: LANES,
@@ -443,24 +446,24 @@
             var sections = world.circuit.sections;
             for (var i = 0; i < sections.length; i++) {
                 var section = sections[i],
+                    enter = section.enter * formulaRules.trackScale,
+                    hold = section.hold * formulaRules.trackScale,
+                    leave = section.leave * formulaRules.trackScale,
                     startY = lastY(),
                     endY =
                         i === sections.length - 1
                             ? 0
                             : startY + section.hill * SEGLEN,
-                    total = section.enter + section.hold + section.leave;
+                    total = enter + hold + leave;
                 for (var n = 0; n < total; n++) {
                     var curve;
-                    if (n < section.enter)
-                        curve = easeIn(0, section.curve, n / section.enter);
-                    else if (n < section.enter + section.hold)
-                        curve = section.curve;
+                    if (n < enter) curve = easeIn(0, section.curve, n / enter);
+                    else if (n < enter + hold) curve = section.curve;
                     else
                         curve = easeInOut(
                             section.curve,
                             0,
-                            (n - section.enter - section.hold + 1) /
-                                section.leave,
+                            (n - enter - hold + 1) / leave,
                         );
                     // Diferente da rodovia original, a F1 inclui o extremo da
                     // interpolação: nada de resíduo acumulado na emenda da volta.
@@ -683,7 +686,9 @@
                     );
                     put(start - 6, decor.brakeBoard[50], side, 0.35, 0, false);
                 }
-                start += section.enter + section.hold + section.leave;
+                start +=
+                    (section.enter + section.hold + section.leave) *
+                    formulaRules.trackScale;
             }
         }
 
@@ -731,7 +736,7 @@
                     laneT: 0,
                     z: z,
                     // Linha de referência única: humanos iniciam em progress=0.
-                    // A vantagem positiva do grid conta na distância das três voltas.
+                    // A vantagem positiva do grid conta na distância total da prova.
                     progress: z,
                     distance: z,
                     laps: 1,
@@ -765,7 +770,11 @@
 
         function syncTraffic() {
             var n;
-            for (n = 0; n < segments.length; n++) segments[n].cars.length = 0;
+            // Só segmentos que tinham carros precisam ser limpos. O custo não
+            // cresce com o comprimento dos circuitos de várias voltas.
+            for (n = 0; n < occupiedSegments.length; n++)
+                occupiedSegments[n].cars.length = 0;
+            occupiedSegments = [];
             for (n = 0; n < world.traffic.length; n++) {
                 var c = world.traffic[n];
                 if (mode === "formula" && c.finished) {
@@ -773,6 +782,7 @@
                     continue;
                 }
                 c.seg = findSegment(c.z);
+                if (!c.seg.cars.length) occupiedSegments.push(c.seg);
                 c.seg.cars.push(c);
             }
         }
@@ -817,12 +827,13 @@
                         continue;
                     }
                     var before = c.progress,
-                        finish = trackLength * 3;
+                        finish = trackLength * world.lapCount;
                     c.progress = Math.min(finish, before + dt * c.speed);
                     c.distance = c.progress;
                     for (
                         var lap = Math.floor(before / trackLength) + 1;
-                        lap <= 3 && lap * trackLength <= c.progress;
+                        lap <= world.lapCount &&
+                        lap * trackLength <= c.progress;
                         lap++
                     ) {
                         var crossing =
@@ -834,7 +845,7 @@
                         c.lapStarted = crossing;
                     }
                     c.laps = Math.min(
-                        3,
+                        world.lapCount,
                         Math.floor(c.progress / trackLength) + 1,
                     );
                     c.z = increase(0, c.progress, trackLength);
