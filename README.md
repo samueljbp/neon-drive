@@ -69,6 +69,10 @@ de carros e caminhões, derrapagens, nitro, colisões, combos e pontuação.
   carga por volta completada. Não há cápsulas de nitro na pista deste modo.
 - Classificação por progresso durante a prova e por tempo de chegada para quem
   terminou, com posição, voltas e cronometragem no HUD e resultados.
+- Adversários com ritmos e estilos próprios de largada, aceleração e curvas.
+  Procuram trajetórias livres para ultrapassar, respeitam carros próximos e os
+  jogadores, e freiam quando não há espaço. Sem teletransportes ou recuperação
+  artificial de distância em relação ao jogador.
 - A prova termina quando todos os humanos completam as três voltas. Em tela
   dividida, quem chegou aguarda o outro; IAs ainda não finalizadas aparecem como
   **EM PISTA**, sem receber um tempo de chegada fictício.
@@ -100,28 +104,29 @@ Os módulos usam IIFEs para encapsular a implementação e expõem suas APIs em
 `window.NeonDrive`. A ordem dos scripts em `index.html` faz parte do contrato de
 carregamento; não há `import`/`export` nem resolução de dependências por npm.
 
-| Caminho                | Responsabilidade                                                                                            |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `index.html`           | Estrutura HTML, telas, Canvas e ordem de carregamento dos scripts.                                          |
-| `css/game.css`         | Estilos da interface, menus e controles de toque.                                                           |
-| `js/core/utils.js`     | Utilitários matemáticos e cálculo dos viewports.                                                            |
-| `js/core/race.js`      | Simulação e física compartilhadas: jogadores, colisões, nitro, relógio e aplicação das regras de cada modo. |
-| `js/world/track.js`    | Construção da rodovia e dos circuitos, segmentos, decoração, pickups e atualização do tráfego/IA.           |
-| `js/world/circuits.js` | Definições dos quatro circuitos: trechos, curvas, elevações e biomas.                                       |
-| `js/modes/classic.js`  | Dificuldades e regras de tempo, checkpoints, pontuação, classificação e resultados do Clássico.             |
-| `js/modes/formula.js`  | Regras de largada, voltas, recarga de nitro, cronometragem, classificação e resultados da Fórmula.          |
-| `js/assets/models.js`  | Malhas procedurais, projeção e iluminação dos modelos de veículos.                                          |
-| `js/assets/sprites.js` | Geração e catálogo de sprites, incluindo os monopostos.                                                     |
-| `js/render/display.js` | Canvas, camadas de cor/emissão, viewports e composição/pós-processamento.                                   |
-| `js/render/scene.js`   | Cenário e pista em perspectiva, sprites, interpolação, recorte em colinas e oclusão emissiva.               |
-| `js/render/cockpit.js` | Cockpits do Clássico e da Fórmula.                                                                          |
-| `js/render/hud.js`     | HUD de velocidade, nitro, pontuação, posição, voltas e tempos conforme o modo.                              |
-| `js/input.js`          | Teclado, toque, gamepads e remapeamento de controles.                                                       |
-| `js/audio.js`          | Áudio e música procedurais.                                                                                 |
-| `js/ui.js`             | Menus, opções, pausa, remapeamento e apresentação dos resultados.                                           |
-| `js/main.js`           | Inicialização, composição dos módulos, loop de passo fixo e preparação dos frames de renderização.          |
-| `js/errors.js`         | Captura e exibição de erros de inicialização/execução.                                                      |
-| `tests/`               | Suítes Node.js em arquivos `*.test.cjs`.                                                                    |
+| Caminho                  | Responsabilidade                                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `index.html`             | Estrutura HTML, telas, Canvas e ordem de carregamento dos scripts.                                          |
+| `css/game.css`           | Estilos da interface, menus e controles de toque.                                                           |
+| `js/core/utils.js`       | Utilitários matemáticos e cálculo dos viewports.                                                            |
+| `js/core/race.js`        | Simulação e física compartilhadas: jogadores, colisões, nitro, relógio e aplicação das regras de cada modo. |
+| `js/world/track.js`      | Construção da rodovia e dos circuitos, segmentos, decoração, pickups e atualização do tráfego/IA.           |
+| `js/world/circuits.js`   | Definições dos quatro circuitos: trechos, curvas, elevações e biomas.                                       |
+| `js/world/formula-ai.js` | Perfis dos pilotos, leitura das curvas, escolha de trajetória e ultrapassagens da IA da Fórmula.            |
+| `js/modes/classic.js`    | Dificuldades e regras de tempo, checkpoints, pontuação, classificação e resultados do Clássico.             |
+| `js/modes/formula.js`    | Regras de largada, voltas, recarga de nitro, cronometragem, classificação e resultados da Fórmula.          |
+| `js/assets/models.js`    | Malhas procedurais, projeção e iluminação dos modelos de veículos.                                          |
+| `js/assets/sprites.js`   | Geração e catálogo de sprites, incluindo os monopostos.                                                     |
+| `js/render/display.js`   | Canvas, camadas de cor/emissão, viewports e composição/pós-processamento.                                   |
+| `js/render/scene.js`     | Cenário e pista em perspectiva, sprites, interpolação, recorte em colinas e oclusão emissiva.               |
+| `js/render/cockpit.js`   | Cockpits do Clássico e da Fórmula.                                                                          |
+| `js/render/hud.js`       | HUD de velocidade, nitro, pontuação, posição, voltas e tempos conforme o modo.                              |
+| `js/input.js`            | Teclado, toque, gamepads e remapeamento de controles.                                                       |
+| `js/audio.js`            | Áudio e música procedurais.                                                                                 |
+| `js/ui.js`               | Menus, opções, pausa, remapeamento e apresentação dos resultados.                                           |
+| `js/main.js`             | Inicialização, composição dos módulos, loop de passo fixo e preparação dos frames de renderização.          |
+| `js/errors.js`           | Captura e exibição de erros de inicialização/execução.                                                      |
+| `tests/`                 | Suítes Node.js em arquivos `*.test.cjs`.                                                                    |
 
 Os sprites são pré-renderizados e reutilizados, não reconstruídos a cada quadro.
 O catálogo da Fórmula é gerado sob demanda na primeira seleção do modo.

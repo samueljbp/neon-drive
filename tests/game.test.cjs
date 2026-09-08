@@ -1184,6 +1184,12 @@ for (let difficulty = 0; difficulty < 3; difficulty++) {
             expected.time,
             "configure não deve mutar dificuldade compartilhada",
         );
+        // Isola a dificuldade usando o MESMO piloto, já após a reação de largada.
+        // A nova IA não tem velocidade/aceleração definidas pelo índice do grid.
+        formula.world.traffic.splice(1);
+        formula.world.traffic[0].launchDelay = 0;
+        formula.world.traffic[0].driver.pace = 0.68;
+        formula.world.traffic[0].driver.acceleration = 0.5;
         formula.world.updateTraffic(3, {
             mode: "formula",
             maxSpeed: formula.race.maxSpeed,
@@ -1274,22 +1280,25 @@ test("F1 world interpola chegadas de todas as IAs dentro do mesmo tick", () => {
         maxSpeed: race.maxSpeed,
         elapsed: 0,
     });
-    const expected = world.traffic.map((car, i) => {
+    // Cada piloto em pista livre: empilhar dez carros no mesmo ponto agora
+    // corretamente aciona frenagem, não é uma fixture válida de cronometragem.
+    const cars = Array.from(world.traffic);
+    cars.forEach((car, i) => {
         const remaining = 100 + i * 50;
         car.progress = car.distance = 3 * world.trackLength - remaining;
         car.z = world.trackLength - remaining;
         car.speed = car.targetSpeed;
-        return 80 + remaining / car.speed;
-    });
-    world.syncTraffic();
-    world.updateTraffic(0.1, {
-        mode: "formula",
-        maxSpeed: race.maxSpeed,
-        elapsed: 80,
-    });
-    world.traffic.forEach((car, i) => {
+        car.launchDelay = 0;
+        const expected = 80 + remaining / car.speed;
+        world.traffic = [car];
+        world.syncTraffic();
+        world.updateTraffic(0.1, {
+            mode: "formula",
+            maxSpeed: race.maxSpeed,
+            elapsed: 80,
+        });
         assert.equal(car.finished, true);
-        close(car.finishTime, expected[i], `IA ${i}`);
+        close(car.finishTime, expected, `IA ${i}`);
         assert.equal(car.seg, null);
     });
 });

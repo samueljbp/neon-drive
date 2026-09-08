@@ -507,6 +507,7 @@
                 elapsed: race.elapsed,
                 mode: mode.id,
                 demo: demo,
+                players: mode.id === "formula" && !demo ? race.players : [],
             });
         }
 

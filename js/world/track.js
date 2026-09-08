@@ -716,12 +716,15 @@
         function placeFormulaTraffic() {
             world.traffic = [];
             var count = 12 - numPlayers;
+            var drivers = ND.formulaAI.createDrivers(count);
             for (var i = 0; i < count; i++) {
                 var offset = i % 2 ? 0.46 : -0.46,
                     z = (12 - numPlayers - i) * SEGLEN * 3 + (i % 2) * SEGLEN;
                 world.traffic.push({
                     id: i,
                     kind: "formula",
+                    driver: drivers[i],
+                    launchDelay: drivers[i].reaction,
                     offset: offset,
                     lane: offset,
                     laneIndex: i % 2 ? 2 : 1,
@@ -737,9 +740,11 @@
                     bestLap: 0,
                     sprite: SPR.formulaCars[i % 6],
                     speed: 0,
-                    targetSpeed:
-                        formulaMaxSpeed *
-                        (0.68 + diff * 0.06 + (i / count) * 0.1),
+                    targetSpeed: ND.formulaAI.pace(
+                        drivers[i],
+                        diff,
+                        formulaMaxSpeed,
+                    ),
                     target: 0,
                     seg: null,
                     hit: 0,
@@ -794,28 +799,19 @@
             var position = Number.isFinite(options.position)
                 ? options.position
                 : 0;
+            var plans = formula
+                ? ND.formulaAI.plan(world, dt, {
+                      maxSpeed: formulaMaxSpeed,
+                      difficulty: diff,
+                      players: options.players,
+                  })
+                : null;
             for (var i = 0; i < world.traffic.length; i++) {
                 var c = world.traffic[i];
                 if (formula) {
                     if (c.finished) continue;
-                    c.targetSpeed =
-                        formulaMaxSpeed *
-                        (0.68 + diff * 0.06 + (i / world.traffic.length) * 0.1);
-                    var curveFactor = Math.max(
-                        0.62,
-                        1 - Math.abs(findSegment(c.z).curve) * 0.095,
-                    );
-                    var wanted = c.targetSpeed * curveFactor;
-                    var acceleration = formulaMaxSpeed / 3.6;
-                    if (c.speed < wanted)
-                        c.speed = Math.min(wanted, c.speed + acceleration * dt);
-                    else
-                        c.speed = Math.max(
-                            wanted,
-                            c.speed - acceleration * 2 * dt,
-                        );
+                    Object.assign(c, plans.get(c));
                     if (c.hit > 0) c.hit -= dt;
-                    c.offset = lerp(c.offset, c.lane, Math.min(1, dt * 0.9));
                     if (options.demo) {
                         c.z = increase(c.z, dt * c.speed, trackLength);
                         continue;
